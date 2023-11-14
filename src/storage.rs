@@ -2,12 +2,19 @@
 
 mod migration;
 
-use crate::{
-    graphql::{network::NetworkFilter, RawEventFilter, TIMESTAMP_SIZE},
-    ingest::implement::EventFilter,
-};
+use core::ops::Deref;
+use std::{cmp, marker::PhantomData, path::Path, sync::Arc, time::Duration};
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+#[cfg(debug_assertions)]
+use rocksdb::properties;
+pub use rocksdb::Direction;
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DBIteratorWithThreadMode, Options, DB};
+use serde::de::DeserializeOwned;
+use tokio::{select, sync::Notify, time};
+use tracing::error;
+
 use giganto_client::ingest::{
     log::{Log, OpLog, SecuLog},
     netflow::{Netflow5, Netflow9},
@@ -23,15 +30,12 @@ use giganto_client::ingest::{
     timeseries::PeriodicTimeSeries,
     Packet,
 };
+
+use crate::{
+    graphql::{network::NetworkFilter, RawEventFilter, TIMESTAMP_SIZE},
+    ingest::implement::EventFilter,
+};
 pub use migration::migrate_data_dir;
-#[cfg(debug_assertions)]
-use rocksdb::properties;
-pub use rocksdb::Direction;
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DBIteratorWithThreadMode, Options, DB};
-use serde::de::DeserializeOwned;
-use std::{cmp, marker::PhantomData, path::Path, sync::Arc, time::Duration};
-use tokio::{select, sync::Notify, time};
-use tracing::error;
 
 const RAW_DATA_COLUMN_FAMILY_NAMES: [&str; 37] = [
     "conn",
@@ -591,6 +595,33 @@ impl<'db, T> RawEventStore<'db, T> {
                     .and_then(|val| Some(*timestamp).zip(val))
             })
             .collect::<Vec<_>>()
+    }
+
+    pub fn batched_multi_get_from_ts<'ts>(
+        &self,
+        cf: &ColumnFamily,
+        source: &str,
+        timestamps: &'ts [DateTime<Utc>],
+    ) -> Vec<(&'ts DateTime<Utc>, Vec<u8>)> {
+        let keys = timestamps.iter().map(|timestamp| {
+            StorageKey::builder()
+                .start_key(source)
+                .end_key(timestamp.timestamp_nanos_opt().unwrap_or(i64::MAX))
+                .build()
+                .key()
+        });
+
+        let result_vector: Vec<(&DateTime<Utc>, Vec<u8>)> = timestamps
+            .iter()
+            .zip(self.db.batched_multi_get_cf(cf, keys, false))
+            .filter_map(|(timestamp, result_value)| {
+                result_value
+                    .ok()
+                    .map(|val| (timestamp, val.unwrap().deref().to_vec()))
+            })
+            .collect();
+
+        result_vector
     }
 
     pub fn multi_get_with_source(
