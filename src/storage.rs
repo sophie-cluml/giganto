@@ -27,7 +27,7 @@ pub use migration::migrate_data_dir;
 #[cfg(debug_assertions)]
 use rocksdb::properties;
 pub use rocksdb::Direction;
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DBIteratorWithThreadMode, Options, DB};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DBIteratorWithThreadMode, Options, DB, ReadOptions};
 use serde::de::DeserializeOwned;
 use std::{cmp, marker::PhantomData, path::Path, sync::Arc, time::Duration};
 use tokio::{select, sync::Notify, time};
@@ -620,6 +620,11 @@ impl<'db, T: DeserializeOwned> RawEventStore<'db, T> {
         to: &[u8],
         direction: Direction,
     ) -> BoundaryIter<'db, T> {
+
+        let mut read_options = ReadOptions::default();
+        read_options.set_iterate_lower_bound(from);
+        read_options.set_iterate_upper_bound(to);
+        self.db.iterator_cf_opt(self.cf, read_options, rocksdb::IteratorMode::From(from, direction));
         BoundaryIter::new(
             self.db
                 .iterator_cf(self.cf, rocksdb::IteratorMode::From(from, direction)),
