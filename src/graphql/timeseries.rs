@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn time_series_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             periodicTimeSeries (filter: {id: "-1"}, first: 1) {
@@ -124,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn time_series_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.periodic_time_series_store().unwrap();
 
         insert_time_series(&store, "src 1", 1, vec![0.0; 12]);

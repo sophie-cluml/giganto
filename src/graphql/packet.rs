@@ -151,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn packets_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             packets(
@@ -175,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn packets_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.packet_store().unwrap();
 
         let dt1 = Utc.with_ymd_and_hms(2023, 1, 20, 0, 0, 0).unwrap();
@@ -257,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn pcap_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.packet_store().unwrap();
 
         let pattern = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+";

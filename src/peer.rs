@@ -70,13 +70,13 @@ impl TomlPeers for PeerInfo {
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug)]
 pub struct PeerConnInfo {
-    peer_conn: Arc<RwLock<HashMap<String, Connection>>>, //key: hostname, value: connection
-    peer_list: Arc<RwLock<HashSet<PeerInfo>>>,
-    ingest_sources: IngestSources,
-    peer_sources: PeerSources, //key: address(for request graphql/publish), value: peer's collect sources(hash set)
-    peer_sender: Sender<PeerInfo>,
+    peer_conn: Arc<RwLock<HashMap<String, Connection>>>, // key: CN_hostname, value: connection // ex: (<"node2", connetion object>, <"node1", connection object>)
+    peer_list: Arc<RwLock<HashSet<PeerInfo>>>, // ex: (("node2", "1.2.3.2:38384"), ("node1", "1.2.3.1:38384"))  // toml파일과 일치할 듯
+    ingest_sources: IngestSources, // 현 giganto가 연결되어 있는 ingest 이름과 마지막 확인 시간 (<"ingest-node1", 2023-11-22T12:12:12>, <"ingest-node2", 2023-11-22T12:12:12>)
+    peer_sources: PeerSources, // key: peer address(for request graphql/publish), value: peer's collect sources(hash set) ex: (<"1.2.3.1", ("ingest-node1", "ingest-node2")>, <"1.2.3.2, ("ingest-node3", )">)
+    peer_sender: Sender<PeerInfo>, // mpsc bounded channel의 send end
     local_address: SocketAddr,
-    notify_source: Arc<Notify>,
+    notify_source: Arc<Notify>, // ingest source가 새롭게 연결되면, 이것을 peer쪽에 알려주기 위한 notify
     config_doc: Document,
     config_path: String,
 }
@@ -224,7 +224,7 @@ async fn connect(
     let connection = client_endpoint
         .connect(peer_info.address, &peer_info.host_name)?
         .await?;
-    let (send, recv) = client_handshake(&connection, PEER_VERSION_REQ).await?;
+    let (send, recv) = client_handshake(&connection, env!("CARGO_PKG_VERSION")).await?;
     Ok((connection, send, recv))
 }
 
@@ -284,6 +284,7 @@ async fn client_connection(
                 update_to_new_source_list(
                     recv_source_list,
                     remote_addr.clone(),
+                    connection.remote_address().port(),
                     peer_conn_info.peer_sources.clone(),
                 )
                 .await;
@@ -333,12 +334,13 @@ async fn client_connection(
 
                             let peer_list = peer_conn_info.peer_list.clone();
                             let sender = peer_conn_info.peer_sender.clone();
-                            let remote_addr =remote_addr.clone();
+                            let remote_addr = remote_addr.clone();
+                            let remote_port = connection.remote_address().port();
                             let peer_sources = peer_conn_info.peer_sources.clone();
                             let doc = peer_conn_info.config_doc.clone();
                             let path= peer_conn_info.config_path.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_request(stream,peer_conn_info.local_address,remote_addr,peer_list,peer_sources,sender,doc,path).await {
+                                if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, remote_port, peer_list, peer_sources, sender, doc, path).await {
                                     error!("failed: {}", e);
                                 }
                             });
@@ -440,6 +442,7 @@ async fn server_connection(
     update_to_new_source_list(
         recv_source_list.clone(),
         remote_addr.clone(),
+        connection.remote_address().port(),
         peer_conn_info.peer_sources.clone(),
     )
     .await;
@@ -489,12 +492,13 @@ async fn server_connection(
 
                 let peer_list = peer_conn_info.peer_list.clone();
                 let sender = peer_conn_info.peer_sender.clone();
-                let remote_addr =remote_addr.clone();
+                let remote_addr = remote_addr.clone();
+                let remote_port = connection.remote_address().port();
                 let peer_sources = peer_conn_info.peer_sources.clone();
                 let doc = peer_conn_info.config_doc.clone();
                 let path= peer_conn_info.config_path.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_request(stream,peer_conn_info.local_address,remote_addr,peer_list,peer_sources,sender,doc,path).await {
+                    if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, remote_port, peer_list, peer_sources, sender, doc, path).await {
                         error!("failed: {}", e);
                     }
                 });
@@ -524,6 +528,7 @@ async fn handle_request(
     (_, mut recv): (SendStream, RecvStream),
     local_addr: SocketAddr,
     remote_addr: String,
+    remote_port: u16,
     peer_list: Arc<RwLock<HashSet<PeerInfo>>>,
     peer_sources: PeerSources,
     sender: Sender<PeerInfo>,
@@ -541,7 +546,8 @@ async fn handle_request(
         PeerCode::UpdateSourceList => {
             let update_source_list = bincode::deserialize::<HashSet<String>>(&msg_buf)
                 .map_err(|e| anyhow!("Failed to deserialize source list: {}", e))?;
-            update_to_new_source_list(update_source_list, remote_addr, peer_sources).await;
+            update_to_new_source_list(update_source_list, remote_addr, remote_port, peer_sources)
+                .await;
         }
     }
     Ok(())
@@ -644,12 +650,15 @@ async fn update_to_new_peer_list(
 ) -> Result<()> {
     let mut is_change = false;
     for recv_peer_info in recv_peer_list {
-        if local_address.ip() != recv_peer_info.address.ip()
+        // if local_address.ip() != recv_peer_info.address.ip()
+        // pita temp 마지막까지 유지...
+        if !(local_address.ip() == recv_peer_info.address.ip()
+            && local_address.port() == recv_peer_info.address.port())
             && !peer_list.read().await.contains(&recv_peer_info)
         {
             is_change = true;
             peer_list.write().await.insert(recv_peer_info.clone());
-            sender.send(recv_peer_info).await?;
+            sender.send(recv_peer_info).await?; // 여기서 peer_sender.send 발생. toml에 의미있는 write가 발생하면 sender.send()가 발생된다
         }
     }
 
@@ -669,12 +678,13 @@ async fn update_to_new_peer_list(
 async fn update_to_new_source_list(
     recv_source_list: HashSet<String>,
     remote_addr: String,
+    remote_port: u16,
     peer_sources: Arc<RwLock<HashMap<String, HashSet<String>>>>,
 ) {
     peer_sources
         .write()
         .await
-        .insert(remote_addr, recv_source_list);
+        .insert(format!("{remote_addr}:{remote_port}"), recv_source_list);
 }
 
 #[cfg(test)]

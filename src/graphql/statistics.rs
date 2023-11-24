@@ -258,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_statistics() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.statistics_store().unwrap();
         let now = Utc::now().timestamp_nanos_opt().unwrap();
         insert_statistics_raw_event(&store, now, "src 1", 0, 600, 1000000, 300000000);

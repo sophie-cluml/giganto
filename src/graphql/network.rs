@@ -4,19 +4,27 @@ use super::{
     get_timestamp_from_key, load_connection, min_max_time, Engine, FromKeyValue,
 };
 use crate::{
-    graphql::{RawEventFilter, TimeRange},
+    graphql::{
+        client::asclient::{conn_raw_events, ConnRawEvents},
+        RawEventFilter, TimeRange,
+    },
+    peer::PeerSources,
     storage::{Database, FilteredIter, KeyExtractor},
+    IngestSources,
 };
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, InputObject, Object, Result, SimpleObject, Union,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime as ChronoDateTime, Utc};
 use giganto_client::ingest::network::{
     Conn, DceRpc, Dns, Ftp, Http, Kerberos, Ldap, Mqtt, Nfs, Ntlm, Rdp, Smb, Smtp, Ssh, Tls,
 };
+use graphql_client::{GraphQLQuery, Response as GraphQlResponse};
 use serde::Serialize;
 use std::{collections::BTreeSet, fmt::Debug, iter::Peekable, net::IpAddr};
+
+type DateTime = ChronoDateTime<Utc>;
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;
@@ -35,6 +43,193 @@ pub struct NetworkFilter {
     log_contents: Option<String>,
 }
 
+// macro_rules! impl_into_graphql_client_network_filter {
+//     ($client_mod:ident) => {
+//         impl Into<$client_mod::NetworkFilter> for NetworkFilter {
+//             fn into(self) -> $client_mod::NetworkFilter {
+//                 $client_mod::NetworkFilter {
+//                     time: self.time,
+//                     source: self.source,
+//                     orig_addr: self.orig_addr,
+//                     resp_addr: self.resp_addr,
+//                     orig_port: self.orig_port,
+//                     resp_port: self.resp_port,
+//                     log_level: self.log_level,
+//                     log_contents: self.log_contents,
+//                 }
+//             }
+//         }
+//     };
+// }
+// impl_into_graphql_client_network_filter!(dns_raw_events);
+// impl_into_graphql_client_network_filter!(conn_raw_events);
+
+// impl Into<conn_raw_events::TimeRange> for TimeRange {
+//     fn into(self) -> conn_raw_events::TimeRange {
+//         conn_raw_events::TimeRange {
+//             start: self.start,
+//             end: self.end,
+//         }
+//     }
+// }
+
+// impl Into<conn_raw_events::IpRange> for IpRange {
+//     fn into(self) -> conn_raw_events::IpRange {
+//         conn_raw_events::IpRange {
+//             start: self.start,
+//             end: self.end,
+//         }
+//     }
+// }
+
+// impl Into<conn_raw_events::PortRange> for PortRange {
+//     fn into(self) -> conn_raw_events::PortRange {
+//         conn_raw_events::PortRange {
+//             start: self.start.map(std::convert::Into::into),
+//             end: self.end.map(std::convert::Into::into),
+//         }
+//     }
+// }
+
+// impl Into<conn_raw_events::NetworkFilter> for NetworkFilter {
+//     fn into(self) -> conn_raw_events::NetworkFilter {
+//         conn_raw_events::NetworkFilter {
+//             time: self.time.map(std::convert::Into::into),
+//             source: self.source,
+//             orig_addr: self.orig_addr.map(std::convert::Into::into),
+//             resp_addr: self.resp_addr.map(std::convert::Into::into),
+//             orig_port: self.orig_port.map(std::convert::Into::into),
+//             resp_port: self.resp_port.map(std::convert::Into::into),
+//             log_level: self.log_level,
+//             log_contents: self.log_contents,
+//         }
+//     }
+// }
+
+// #[allow(clippy::cast_possible_truncation)]
+// impl Into<ConnRawEvent> for conn_raw_events::ConnRawEventsConnRawEventsEdgesNode {
+//     fn into(self) -> ConnRawEvent {
+//         ConnRawEvent {
+//             timestamp: self.timestamp.into(),
+//             orig_addr: self.orig_addr,
+//             orig_port: self.orig_port as _,
+//             resp_addr: self.resp_addr,
+//             resp_port: self.resp_port as _,
+//             proto: self.proto as _,
+//             duration: self.duration,
+//             service: self.service,
+//             orig_bytes: self.orig_bytes as _,
+//             resp_bytes: self.resp_bytes as _,
+//             orig_pkts: self.orig_pkts as _,
+//             resp_pkts: self.resp_pkts as _,
+//         }
+//     }
+// }
+
+impl From<TimeRange> for conn_raw_events::TimeRange {
+    fn from(range: TimeRange) -> Self {
+        conn_raw_events::TimeRange {
+            start: range.start,
+            end: range.end,
+        }
+    }
+}
+
+impl From<IpRange> for conn_raw_events::IpRange {
+    fn from(range: IpRange) -> Self {
+        conn_raw_events::IpRange {
+            start: range.start,
+            end: range.end,
+        }
+    }
+}
+
+impl From<PortRange> for conn_raw_events::PortRange {
+    fn from(range: PortRange) -> Self {
+        conn_raw_events::PortRange {
+            start: range.start.map(Into::into),
+            end: range.end.map(Into::into),
+        }
+    }
+}
+
+impl From<NetworkFilter> for conn_raw_events::NetworkFilter {
+    fn from(filter: NetworkFilter) -> Self {
+        conn_raw_events::NetworkFilter {
+            time: filter.time.map(Into::into),
+            source: filter.source,
+            orig_addr: filter.orig_addr.map(Into::into),
+            resp_addr: filter.resp_addr.map(Into::into),
+            orig_port: filter.orig_port.map(Into::into),
+            resp_port: filter.resp_port.map(Into::into),
+            log_level: filter.log_level,
+            log_contents: filter.log_contents,
+        }
+    }
+}
+
+impl From<conn_raw_events::ConnRawEventsConnRawEventsEdgesNode> for ConnRawEvent {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn from(node: conn_raw_events::ConnRawEventsConnRawEventsEdgesNode) -> Self {
+        ConnRawEvent {
+            timestamp: node.timestamp,
+            orig_addr: node.orig_addr,
+            orig_port: node.orig_port as _,
+            resp_addr: node.resp_addr,
+            resp_port: node.resp_port as _,
+            proto: node.proto as _,
+            duration: node.duration,
+            service: node.service,
+            orig_bytes: node.orig_bytes as _,
+            resp_bytes: node.resp_bytes as _,
+            orig_pkts: node.orig_pkts as _,
+            resp_pkts: node.resp_pkts as _,
+        }
+    }
+}
+
+// impl From<TimeRange> for conn_raw_events::TimeRange {
+//     fn from(from: TimeRange) -> Self {
+//         Self {
+//             start: from.start,
+//             end: from.end,
+//         }
+//     }
+// }
+
+// impl From<IpRange> for conn_raw_events::IpRange {
+//     fn from(from: IpRange) -> Self {
+//         Self {
+//             start: from.start,
+//             end: from.end,
+//         }
+//     }
+// }
+
+// impl From<PortRange> for conn_raw_events::PortRange {
+//     fn from(from: PortRange) -> Self {
+//         Self {
+//             start: from.start.map(std::convert::From::from),
+//             end: from.end.map(std::convert::From::from),
+//         }
+//     }
+// }
+
+// impl From<NetworkFilter> for conn_raw_events::NetworkFilter {
+//     fn from(from: NetworkFilter) -> Self {
+//         Self {
+//             time: from.time.map(std::convert::From::from),
+//             source: from.source,
+//             orig_addr: from.orig_addr.map(std::convert::From::from),
+//             resp_addr: from.resp_addr.map(std::convert::From::from),
+//             orig_port: from.orig_port.map(std::convert::From::from),
+//             resp_port: from.resp_port.map(std::convert::From::from),
+//             log_level: from.log_level,
+//             log_contents: from.log_contents,
+//         }
+//     }
+// }
+
 #[derive(InputObject, Serialize)]
 pub struct SearchFilter {
     pub time: Option<TimeRange>,
@@ -46,7 +241,7 @@ pub struct SearchFilter {
     resp_port: Option<PortRange>,
     log_level: Option<String>,
     log_contents: Option<String>,
-    pub timestamps: Vec<DateTime<Utc>>,
+    pub timestamps: Vec<DateTime>,
     keyword: Option<String>,
 }
 
@@ -72,7 +267,7 @@ impl KeyExtractor for NetworkFilter {
         None
     }
 
-    fn get_range_end_key(&self) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    fn get_range_end_key(&self) -> (Option<DateTime>, Option<DateTime>) {
         if let Some(time) = &self.time {
             (time.start, time.end)
         } else {
@@ -138,7 +333,7 @@ impl RawEventFilter for SearchFilter {
 
 #[derive(SimpleObject, Debug)]
 struct ConnRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -155,7 +350,7 @@ struct ConnRawEvent {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(SimpleObject, Debug)]
 struct DnsRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -178,7 +373,7 @@ struct DnsRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct HttpRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -209,7 +404,7 @@ struct HttpRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct RdpRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -221,7 +416,7 @@ struct RdpRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct SmtpRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -238,7 +433,7 @@ struct SmtpRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct NtlmRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -256,7 +451,7 @@ struct NtlmRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct KerberosRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -276,7 +471,7 @@ struct KerberosRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct SshRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -299,7 +494,7 @@ struct SshRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct DceRpcRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -314,7 +509,7 @@ struct DceRpcRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct FtpRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -337,7 +532,7 @@ struct FtpRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct MqttRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -354,7 +549,7 @@ struct MqttRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct LdapRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -372,7 +567,7 @@ struct LdapRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct TlsRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -401,7 +596,7 @@ struct TlsRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct SmbRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -423,7 +618,7 @@ struct SmbRawEvent {
 
 #[derive(SimpleObject, Debug)]
 struct NfsRawEvent {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime,
     orig_addr: String,
     orig_port: u16,
     resp_addr: String,
@@ -685,21 +880,96 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, ConnRawEvent>> {
-        let db = ctx.data::<Database>()?;
-        let store = db.conn_store()?;
+        let is_current_giganto_in_charge = ctx
+            .data::<IngestSources>()?
+            .read()
+            .await
+            .iter()
+            .any(|(ingest_source_name, _last_conn_time)| ingest_source_name == &filter.source);
 
-        query(
-            after,
-            before,
-            first,
-            last,
-            |after, before, first, last| async move {
-                load_connection(&store, &filter, after, before, first, last)
-            },
-        )
-        .await
+        if is_current_giganto_in_charge {
+            let db = ctx.data::<Database>()?;
+            let store = db.conn_store()?;
+            query(
+                after,
+                before,
+                first,
+                last,
+                |after, before, first, last| async move {
+                    load_connection(&store, &filter, after, before, first, last)
+                },
+            )
+            .await
+        } else {
+            // pita 테스트해보기 //  "node1:8443";
+            let target_peer_address = ctx.data::<PeerSources>()?.read().await.iter().find_map(
+                |(peer_address, peer_ingest_sources)| {
+                    if peer_ingest_sources.contains(&filter.source) {
+                        Some(peer_address.clone())
+                    } else {
+                        None
+                    }
+                },
+            );
+
+            match target_peer_address {
+                Some(target_peer_address) => {
+                    let client = ctx.data::<reqwest::Client>()?;
+                    let request_body = ConnRawEvents::build_query(conn_raw_events::Variables {
+                        filter: filter.into(),
+                        after,
+                        before,
+                        first: first.map(std::convert::Into::into),
+                        last: last.map(std::convert::Into::into),
+                    });
+                    let req = client
+                        .post(format!("https://{target_peer_address}/graphql"))
+                        .header(reqwest::header::CONTENT_TYPE, "application/json")
+                        .json(&request_body);
+
+                    if let Ok(resp) = req.send().await {
+                        match resp.error_for_status() {
+                            Ok(resp_ok) => {
+                                if let Ok(graphql_resp) = resp_ok
+                                    .json::<GraphQlResponse<conn_raw_events::ResponseData>>()
+                                    .await
+                                {
+                                    if let Some(data) = graphql_resp.data {
+                                        let page_info = data.conn_raw_events.page_info;
+
+                                        let mut connection = Connection::new(
+                                            page_info.has_previous_page,
+                                            page_info.has_next_page,
+                                        );
+                                        connection.edges = data
+                                            .conn_raw_events
+                                            .edges
+                                            .into_iter()
+                                            .map(|e| Edge::new(e.cursor, e.node.into()))
+                                            .collect();
+                                        Ok(connection)
+                                    } else {
+                                        Ok(Connection::new(false, false))
+                                    }
+                                } else {
+                                    // pita todo panic은 error로 변경하기
+                                    panic!("GraphQLParseError");
+                                }
+                            }
+                            Err(_err) => {
+                                panic!("HttpStatusNoSuccess(res.status()");
+                            }
+                        }
+                    } else {
+                        panic!("GraphQLResponseError");
+                    }
+                }
+                None => Ok(Connection::new(false, false)),
+            }
+        }
     }
 
+    // pita 다른 것들도 노가다로 적용....
     async fn dns_raw_events<'ctx>(
         &self,
         ctx: &Context<'ctx>,
@@ -1132,13 +1402,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.conn_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Conn>(&exist_data, &filter))
     }
 
@@ -1146,13 +1416,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.dns_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Dns>(&exist_data, &filter))
     }
 
@@ -1160,13 +1430,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.http_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Http>(&exist_data, &filter))
     }
 
@@ -1174,13 +1444,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.rdp_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Rdp>(&exist_data, &filter))
     }
 
@@ -1188,13 +1458,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.smtp_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Smtp>(&exist_data, &filter))
     }
 
@@ -1202,13 +1472,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.ntlm_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Ntlm>(&exist_data, &filter))
     }
 
@@ -1216,13 +1486,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.kerberos_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Kerberos>(&exist_data, &filter))
     }
 
@@ -1230,13 +1500,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.ssh_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Ssh>(&exist_data, &filter))
     }
 
@@ -1244,13 +1514,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.dce_rpc_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<DceRpc>(&exist_data, &filter))
     }
 
@@ -1258,13 +1528,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.ftp_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Ftp>(&exist_data, &filter))
     }
 
@@ -1272,13 +1542,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.mqtt_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Mqtt>(&exist_data, &filter))
     }
 
@@ -1286,13 +1556,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.ldap_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Ldap>(&exist_data, &filter))
     }
 
@@ -1300,13 +1570,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.tls_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Tls>(&exist_data, &filter))
     }
 
@@ -1314,13 +1584,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.smb_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Smb>(&exist_data, &filter))
     }
 
@@ -1328,13 +1598,13 @@ impl NetworkQuery {
         &self,
         ctx: &Context<'ctx>,
         filter: SearchFilter,
-    ) -> Result<Vec<DateTime<Utc>>> {
+    ) -> Result<Vec<DateTime>> {
         let db = ctx.data::<Database>()?;
         let store = db.nfs_store()?;
         let exist_data = store
             .batched_multi_get_from_ts(&filter.source, &filter.timestamps)
             .into_iter()
-            .collect::<BTreeSet<(DateTime<Utc>, Vec<u8>)>>();
+            .collect::<BTreeSet<(DateTime, Vec<u8>)>>();
         Ok(collect_exist_timestamp::<Nfs>(&exist_data, &filter))
     }
 }
@@ -1674,13 +1944,13 @@ mod tests {
 
     #[tokio::test]
     async fn conn_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             connRawEvents(
                 filter: {
                     time: { start: "1992-06-05T00:00:00Z", end: "2011-09-22T00:00:00Z" }
-                    source: "a"
+                    source: "ingest_source_1"
                     origAddr: { start: "192.168.4.75", end: "192.168.4.79" }
                     respAddr: { start: "192.168.4.75", end: "192.168.4.79" }
                     origPort: { start: 46377, end: 46380 }
@@ -1703,7 +1973,7 @@ mod tests {
 
     #[tokio::test]
     async fn conn_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.conn_store().unwrap();
 
         insert_conn_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -1765,7 +2035,7 @@ mod tests {
 
     #[tokio::test]
     async fn dns_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             dnsRawEvents(
@@ -1800,7 +2070,7 @@ mod tests {
 
     #[tokio::test]
     async fn dns_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dns_store().unwrap();
 
         insert_dns_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -1867,7 +2137,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             httpRawEvents(
@@ -1895,7 +2165,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.http_store().unwrap();
 
         insert_http_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -1970,7 +2240,7 @@ mod tests {
 
     #[tokio::test]
     async fn rdp_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             rdpRawEvents(
@@ -1998,7 +2268,7 @@ mod tests {
 
     #[tokio::test]
     async fn rdp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.rdp_store().unwrap();
 
         insert_rdp_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2054,7 +2324,7 @@ mod tests {
 
     #[tokio::test]
     async fn smtp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smtp_store().unwrap();
 
         insert_smtp_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2109,7 +2379,7 @@ mod tests {
 
     #[tokio::test]
     async fn ntlm_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ntlm_store().unwrap();
 
         insert_ntlm_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2165,7 +2435,7 @@ mod tests {
 
     #[tokio::test]
     async fn kerberos_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.kerberos_store().unwrap();
 
         insert_kerberos_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2223,7 +2493,7 @@ mod tests {
 
     #[tokio::test]
     async fn ssh_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ssh_store().unwrap();
 
         insert_ssh_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2284,7 +2554,7 @@ mod tests {
 
     #[tokio::test]
     async fn dce_rpc_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dce_rpc_store().unwrap();
 
         insert_dce_rpc_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2337,7 +2607,7 @@ mod tests {
 
     #[tokio::test]
     async fn ftp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ftp_store().unwrap();
 
         insert_ftp_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2398,7 +2668,7 @@ mod tests {
 
     #[tokio::test]
     async fn mqtt_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.mqtt_store().unwrap();
 
         insert_mqtt_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2453,7 +2723,7 @@ mod tests {
 
     #[tokio::test]
     async fn ldap_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ldap_store().unwrap();
 
         insert_ldap_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2509,7 +2779,7 @@ mod tests {
 
     #[tokio::test]
     async fn tls_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.tls_store().unwrap();
 
         insert_tls_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2576,7 +2846,7 @@ mod tests {
 
     #[tokio::test]
     async fn smb_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smb_store().unwrap();
 
         insert_smb_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2636,7 +2906,7 @@ mod tests {
 
     #[tokio::test]
     async fn nfs_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.nfs_store().unwrap();
 
         insert_nfs_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2687,7 +2957,7 @@ mod tests {
 
     #[tokio::test]
     async fn conn_with_start_or_end() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.conn_store().unwrap();
 
         insert_conn_raw_event(&store, "src 1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2723,7 +2993,7 @@ mod tests {
 
     #[tokio::test]
     async fn union() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let conn_store = schema.db.conn_store().unwrap();
         let dns_store = schema.db.dns_store().unwrap();
         let http_store = schema.db.http_store().unwrap();
@@ -2917,7 +3187,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             searchHttpRawEvents(
@@ -2938,7 +3208,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_http_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.http_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -2974,7 +3244,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_conn_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.conn_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3010,7 +3280,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_dns_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dns_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3046,7 +3316,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_rdp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.rdp_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3082,7 +3352,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_smtp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smtp_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3118,7 +3388,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_ntlm_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ntlm_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3154,7 +3424,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_kerberos_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.kerberos_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3190,7 +3460,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_ssh_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ssh_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3226,7 +3496,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_dce_rpc_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dce_rpc_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3262,7 +3532,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_ftp_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ftp_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3298,7 +3568,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_mqtt_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.mqtt_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3334,7 +3604,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_ldap_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ldap_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3370,7 +3640,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_tls_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.tls_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3406,7 +3676,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_smb_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smb_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z
@@ -3442,7 +3712,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_nfs_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.nfs_store().unwrap();
 
         let timestamp1 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 1).unwrap(); //2020-01-01T00:00:01Z

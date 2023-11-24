@@ -16,6 +16,7 @@ data-encoding = "2.4"
 directories = "5.0"
 futures-util = "0.3"
 giganto-client = { git = "https://github.com/aicers/giganto-client.git", tag = "0.15.2" }
+graphql_client = "0.13"
 humantime = "2.1"
 humantime-serde = "1"
 libc = "0.2"
@@ -23,6 +24,7 @@ num_enum = "0.7"
 num-traits = "0.2"
 pcap = "1"
 quinn = "0.10"
+reqwest = { version = "0.11", features = ["rustls-tls", "json"] }
 rocksdb = "0.21"
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
 rustls = "0.21"

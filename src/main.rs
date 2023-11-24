@@ -11,6 +11,7 @@ use crate::{server::SERVER_REBOOT_DELAY, storage::migrate_data_dir};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use giganto_client::init_tracing;
+use peer::PeerSources;
 use quinn::Connection;
 use rocksdb::DB;
 use rustls::{Certificate, PrivateKey};
@@ -107,10 +108,26 @@ async fn main() -> Result<()> {
         return Err(anyhow!("failed to set signal handler: {}", e));
     }
 
+    let reqwest_cert_files: Vec<reqwest::Certificate> = files
+        .iter()
+        .map(|cert_data| {
+            reqwest::Certificate::from_pem(cert_data.as_slice())
+                .expect("Failed to convert certificate to reqwest::Certificate")
+        })
+        .collect();
+    let mut request_client_pool = reqwest::Client::builder().use_rustls_tls();
+    for root_cert in reqwest_cert_files {
+        request_client_pool = request_client_pool.add_root_certificate(root_cert);
+    }
+    let request_client_pool = request_client_pool
+        .build()
+        .expect("Failed to build request client pool");
+
     loop {
         let pcap_sources = new_pcap_sources();
         let ingest_sources = new_ingest_sources();
         let stream_direct_channels = new_stream_direct_channels();
+        let peer_sources = new_peer_sources();
         let notify_config_reload = Arc::new(Notify::new());
         let notify_shutdown = Arc::new(Notify::new());
         let mut notify_source_change = None;
@@ -118,6 +135,9 @@ async fn main() -> Result<()> {
         let schema = graphql::schema(
             database.clone(),
             pcap_sources.clone(),
+            ingest_sources.clone(),
+            peer_sources.clone(),
+            request_client_pool.clone(),
             settings.export_dir.clone(),
             notify_config_reload.clone(),
             settings.cfg_path.clone(),
@@ -140,7 +160,6 @@ async fn main() -> Result<()> {
         if let Some(peer_address) = settings.peer_address {
             let peer_server =
                 peer::Peer::new(peer_address, cert.clone(), key.clone(), files.clone())?;
-            let peer_sources = Arc::new(RwLock::new(HashMap::new()));
             let notify_source = Arc::new(Notify::new());
             let peers = if let Some(peers) = settings.peers {
                 peers
@@ -150,7 +169,7 @@ async fn main() -> Result<()> {
             task::spawn(peer_server.run(
                 peers,
                 ingest_sources.clone(),
-                peer_sources,
+                peer_sources.clone(),
                 notify_source.clone(),
                 notify_shutdown.clone(),
                 settings.cfg_path.clone(),
@@ -295,4 +314,8 @@ fn new_stream_direct_channels() -> StreamDirectChannels {
     Arc::new(RwLock::new(
         HashMap::<String, UnboundedSender<Vec<u8>>>::new(),
     ))
+}
+
+fn new_peer_sources() -> PeerSources {
+    Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()))
 }

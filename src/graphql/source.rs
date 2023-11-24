@@ -26,7 +26,7 @@ mod tests {
 
     #[tokio::test]
     async fn sources_test() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.sources_store().unwrap();
         store.insert("src 1", Utc::now()).unwrap();
         store.insert("src 2", Utc::now()).unwrap();

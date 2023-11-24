@@ -216,9 +216,9 @@ mod tests {
     use chrono::{DateTime, NaiveDateTime, Utc};
     use giganto_client::ingest::log::{Log, OpLog, OpLogLevel};
 
-    #[test]
-    fn load_time_range() {
-        let schema = TestSchema::new();
+    #[tokio::test]
+    async fn load_time_range() {
+        let schema = TestSchema::new().await;
         let store = schema.db.log_store().unwrap();
 
         insert_log_raw_event(&store, "src1", 1, "kind1", b"log1");
@@ -645,7 +645,7 @@ mod tests {
 
     #[tokio::test]
     async fn log_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             logRawEvents (filter: {source: "einsis", kind: "Hello"}, first: 1) {
@@ -662,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn log_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.log_store().unwrap();
 
         insert_log_raw_event(&store, "src 1", 1, "kind 1", b"log 1");
@@ -690,7 +690,7 @@ mod tests {
 
     #[tokio::test]
     async fn oplog_empty() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let query = r#"
         {
             opLogRawEvents (filter: {agentId: "giganto@src 1", logLevel: "Info", contents: ""}, first: 1) {
@@ -708,7 +708,7 @@ mod tests {
 
     #[tokio::test]
     async fn oplog_with_data() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.op_log_store().unwrap();
 
         insert_oplog_raw_event(&store, "giganto", 1);
@@ -731,9 +731,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn load_oplog() {
-        let schema = TestSchema::new();
+    #[tokio::test]
+    async fn load_oplog() {
+        let schema = TestSchema::new().await;
         let store = schema.db.op_log_store().unwrap();
 
         insert_oplog_raw_event(&store, "giganto", 1);

@@ -1,3 +1,4 @@
+mod client;
 mod export;
 mod log;
 mod netflow;
@@ -12,11 +13,12 @@ mod timeseries;
 
 use self::network::{IpRange, NetworkFilter, PortRange, SearchFilter};
 use crate::{
-    ingest::implement::EventFilter,
+    ingest::{self, implement::EventFilter},
+    peer::PeerSources,
     storage::{
         Database, Direction, FilteredIter, KeyExtractor, KeyValue, RawEventStore, StorageKey,
     },
-    PcapSources,
+    IngestSources, PcapSources,
 };
 use anyhow::anyhow;
 use async_graphql::{
@@ -93,9 +95,13 @@ pub trait FromKeyValue<T>: Sized {
 pub type Schema = async_graphql::Schema<Query, Mutation, EmptySubscription>;
 type ConnArgs<T> = (Vec<(Box<[u8]>, T)>, bool, bool);
 
+#[allow(clippy::too_many_arguments)]
 pub fn schema(
     database: Database,
     pcap_sources: PcapSources,
+    ingest_sources: IngestSources,
+    peer_sources: PeerSources,
+    request_client_pool: reqwest::Client,
     export_path: PathBuf,
     config_reload: Arc<Notify>,
     config_file_path: String,
@@ -103,6 +109,9 @@ pub fn schema(
     Schema::build(Query::default(), Mutation::default(), EmptySubscription)
         .data(database)
         .data(pcap_sources)
+        .data(ingest_sources)
+        .data(peer_sources)
+        .data(request_client_pool)
         .data(export_path)
         .data(config_reload)
         .data(config_file_path)
@@ -607,6 +616,9 @@ fn min_max_time(is_forward: bool) -> DateTime<Utc> {
 }
 
 #[cfg(test)]
+const CURRENT_GIGANTO_INGEST_SOURCES: [&str; 2] = ["src 1", "ingest src 1"];
+
+#[cfg(test)]
 struct TestSchema {
     _dir: tempfile::TempDir, // to prevent the data directory from being deleted while the test is running
     db: Database,
@@ -615,22 +627,39 @@ struct TestSchema {
 
 #[cfg(test)]
 impl TestSchema {
-    fn new() -> Self {
-        use crate::new_pcap_sources;
+    async fn new() -> Self {
         use crate::storage::DbOptions;
+        use crate::{new_ingest_sources, new_pcap_sources, new_peer_sources};
 
         let db_dir = tempfile::tempdir().unwrap();
         let db = Database::open(db_dir.path(), &DbOptions::default()).unwrap();
         let pcap_sources = new_pcap_sources();
+        let ingest_sources: Arc<
+            tokio::sync::RwLock<std::collections::HashMap<String, DateTime<Utc>>>,
+        > = new_ingest_sources();
+        let writable_ingest_sources = ingest_sources.clone();
+        let peer_sources = new_peer_sources();
+        let request_client_pool = reqwest::Client::new();
         let export_dir = tempfile::tempdir().unwrap();
         let config_reload = Arc::new(Notify::new());
         let schema = schema(
             db.clone(),
             pcap_sources,
+            ingest_sources,
+            peer_sources,
+            request_client_pool,
             export_dir.path().to_path_buf(),
             config_reload,
             "file_path".to_string(),
         );
+
+        for source in CURRENT_GIGANTO_INGEST_SOURCES {
+            writable_ingest_sources
+                .write()
+                .await
+                .insert(source.to_string(), Utc::now());
+        }
+
         Self {
             _dir: db_dir,
             db,

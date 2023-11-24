@@ -2314,7 +2314,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_query() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
 
         // invalid filter combine1 (log + addr)
         let query = r#"
@@ -2374,7 +2374,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_conn() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.conn_store().unwrap();
 
         insert_conn_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2444,7 +2444,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_dns() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dns_store().unwrap();
 
         insert_dns_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2520,7 +2520,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_http() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.http_store().unwrap();
 
         insert_http_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2604,7 +2604,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_rdp() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.rdp_store().unwrap();
 
         insert_rdp_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2669,7 +2669,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_smtp() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smtp_store().unwrap();
 
         insert_smtp_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2739,7 +2739,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_ntlm() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ntlm_store().unwrap();
 
         insert_ntlm_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2810,7 +2810,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_kerberos() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.kerberos_store().unwrap();
 
         insert_kerberos_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2883,7 +2883,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_ssh() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ssh_store().unwrap();
 
         insert_ssh_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -2958,7 +2958,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_dce_rpc() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.dce_rpc_store().unwrap();
 
         insert_dce_rpc_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3025,7 +3025,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_log() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.log_store().unwrap();
 
         insert_log_raw_event(
@@ -3097,7 +3097,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_time_series() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.periodic_time_series_store().unwrap();
 
         insert_time_series(
@@ -3162,7 +3162,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_op_log() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.op_log_store().unwrap();
 
         insert_op_log_raw_event(&store, "agent1", 1);
@@ -3215,7 +3215,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_ftp() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ftp_store().unwrap();
 
         insert_ftp_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3291,7 +3291,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_mqtt() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.mqtt_store().unwrap();
 
         insert_mqtt_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3361,7 +3361,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_ldap() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.ldap_store().unwrap();
 
         insert_ldap_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3432,7 +3432,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_tls() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.tls_store().unwrap();
 
         insert_tls_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3514,7 +3514,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_smb() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.smb_store().unwrap();
 
         insert_smb_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
@@ -3589,7 +3589,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_nfs() {
-        let schema = TestSchema::new();
+        let schema = TestSchema::new().await;
         let store = schema.db.nfs_store().unwrap();
 
         insert_nfs_raw_event(&store, "src1", Utc::now().timestamp_nanos_opt().unwrap());
