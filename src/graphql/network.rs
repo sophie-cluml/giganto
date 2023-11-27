@@ -23,7 +23,7 @@ use giganto_client::ingest::network::{
 use graphql_client::{GraphQLQuery, Response as GraphQlResponse};
 use serde::Serialize;
 use std::{collections::BTreeSet, fmt::Debug, iter::Peekable, net::IpAddr};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 type DateTime = ChronoDateTime<Utc>;
 
@@ -881,14 +881,6 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, ConnRawEvent>> {
-        // async_graphql::Error
-        let res: std::prelude::v1::Result<
-            &std::sync::Arc<
-                tokio::sync::RwLock<std::collections::HashMap<String, ChronoDateTime<Utc>>>,
-            >,
-            async_graphql::Error,
-        > = ctx.data::<IngestSources>();
-
         let is_current_giganto_in_charge = ctx
             .data::<IngestSources>()?
             .read()
@@ -896,6 +888,16 @@ impl NetworkQuery {
             .iter()
             .any(|(ingest_source_name, _last_conn_time)| ingest_source_name == &filter.source);
 
+        let iss = ctx.data::<IngestSources>()?.read().await;
+
+        let mut is_charge = false;
+        for (isn, _lct) in iss.iter() {
+            info!("iss.iter() isn : {}, filter sn: {}", isn, filter.source);
+            if isn == &filter.source {
+                is_charge = true;
+            }
+        }
+        info!("is_charge {is_charge}");
         info!("is_current_giganto_in_charge {is_current_giganto_in_charge}");
 
         if is_current_giganto_in_charge {
@@ -912,19 +914,25 @@ impl NetworkQuery {
             )
             .await
         } else {
-            // 2. pita 테스트해보기 //  "node1:8443";
-            let target_peer_address = ctx.data::<PeerSources>()?.read().await.iter().find_map(
-                |(peer_address, peer_ingest_sources)| {
-                    if peer_ingest_sources.contains(&filter.source) {
-                        Some(peer_address.clone())
+            let peer_graphql_endpoint = ctx.data::<PeerSources>()?.read().await.iter().find_map(
+                |(peer_address, peer_source_data)| {
+                    info!("{} {:?}", peer_address, peer_source_data.graphql_port);
+                    if peer_source_data.ingest_sources.contains(&filter.source)
+                        && peer_source_data.graphql_port.is_some()
+                    {
+                        Some(format!(
+                            "{}:{}",
+                            peer_address,
+                            peer_source_data.graphql_port.unwrap()
+                        ))
                     } else {
                         None
                     }
                 },
             );
 
-            match target_peer_address {
-                Some(target_peer_address) => {
+            match peer_graphql_endpoint {
+                Some(peer_graphql_endpoint) => {
                     let client = ctx.data::<reqwest::Client>()?;
                     let request_body = ConnRawEvents::build_query(conn_raw_events::Variables {
                         filter: filter.into(),
@@ -933,8 +941,11 @@ impl NetworkQuery {
                         first: first.map(std::convert::Into::into),
                         last: last.map(std::convert::Into::into),
                     });
+
+                    info!("peer_graphql_endpoint: {peer_graphql_endpoint}");
+
                     let req = client
-                        .post(format!("https://{target_peer_address}/graphql"))
+                        .post(format!("https://{peer_graphql_endpoint}/graphql"))
                         .header(reqwest::header::CONTENT_TYPE, "application/json")
                         .json(&request_body);
 

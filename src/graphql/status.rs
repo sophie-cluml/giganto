@@ -14,8 +14,8 @@ use toml_edit::{value, Document, InlineTable};
 
 const GRAPHQL_REBOOT_DELAY: u64 = 100;
 const CONFIG_INGEST_ADDRESS: &str = "ingest_address";
-const CONFIG_PUBLISH_ADDRESS: &str = "publish_address";
-const CONFIG_GRAPHQL_ADDRESS: &str = "graphql_address";
+pub const CONFIG_PUBLISH_ADDRESS: &str = "publish_address";
+pub const CONFIG_GRAPHQL_ADDRESS: &str = "graphql_address";
 const CONFIG_RETENTION: &str = "retention";
 const CONFIG_MAX_OPEN_FILES: &str = "max_open_files";
 const CONFIG_MAX_MB_OF_LEVEL_BASE: &str = "max_mb_of_level_base";
@@ -225,7 +225,7 @@ pub fn write_toml_file(doc: &Document, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_toml_element(key: &str, doc: &Document) -> Result<String> {
+pub fn parse_toml_element(key: &str, doc: &Document) -> Result<String> {
     let Some(item) = doc.get(key) else {
         return Err(anyhow!("{} not found.", key).into());
     };

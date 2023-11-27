@@ -165,6 +165,8 @@ async fn handle_connection(
     let (agent, source) = certificate_info(&extract_cert_from_conn(&connection)?)?;
     let rep = agent.contains("reproduce");
 
+    info!("handle_connection agent: {} ||| source: {}", agent, source);
+
     if !rep {
         pcap_sources
             .write()
@@ -958,12 +960,12 @@ async fn check_sources_conn(
                         if source_store.insert(&source_key, timestamp_val).is_err() {
                             error!("Failed to append source store");
                         }
-                        if !rep {
+                        // if !rep {
                             ingest_sources.write().await.insert(source_key, timestamp_val);
                             if let Some(ref notify) = notify_source {
                                 notify.notify_one();
                             }
-                        }
+                        // }
                     }
                     ConnState::Disconnected => {
                         if source_store.insert(&source_key, timestamp_val).is_err() {
@@ -972,9 +974,9 @@ async fn check_sources_conn(
                         if !rep {
                             ingest_sources.write().await.remove(&source_key);
                             pcap_sources.write().await.remove(&source_key);
-                            if let Some(ref notify) = notify_source {
-                                notify.notify_one();
-                            }
+                            // if let Some(ref notify) = notify_source {
+                            //     notify.notify_one();
+                            // }
                         }
                     }
                 }

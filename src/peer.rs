@@ -1,7 +1,10 @@
 #![allow(clippy::module_name_repetitions)]
 
 use crate::{
-    graphql::status::{insert_toml_peers, read_toml_file, write_toml_file, TomlPeers},
+    graphql::status::{
+        insert_toml_peers, parse_toml_element, read_toml_file, write_toml_file, TomlPeers,
+        CONFIG_GRAPHQL_ADDRESS, CONFIG_PUBLISH_ADDRESS,
+    },
     server::{
         certificate_info, config_client, config_server, extract_cert_from_conn,
         SERVER_CONNNECTION_DELAY, SERVER_ENDPOINT_DELAY,
@@ -22,7 +25,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     mem,
-    net::SocketAddr,
+    net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
     time::Duration,
 };
@@ -40,7 +43,14 @@ use tracing::{error, info, warn};
 const PEER_VERSION_REQ: &str = ">=0.12.0,<0.16.0";
 const PEER_RETRY_INTERVAL: u64 = 5;
 
-pub type PeerSources = Arc<RwLock<HashMap<String, HashSet<String>>>>;
+pub type PeerSources = Arc<RwLock<HashMap<String, PeerSourceData>>>;
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct PeerSourceData {
+    pub ingest_sources: HashSet<String>,
+    pub graphql_port: Option<u16>,
+    pub publish_port: Option<u16>,
+}
 
 #[derive(
     Clone, Copy, Debug, Deserialize, Eq, IntoPrimitive, PartialEq, Serialize, TryFromPrimitive,
@@ -228,6 +238,24 @@ async fn connect(
     Ok((connection, send, recv))
 }
 
+fn get_peer_ports(config_doc: &Document) -> (Option<u16>, Option<u16>) {
+    (
+        get_port_from_config(CONFIG_PUBLISH_ADDRESS, config_doc),
+        get_port_from_config(CONFIG_GRAPHQL_ADDRESS, config_doc),
+    )
+}
+
+fn get_port_from_config(config_key: &str, config_doc: &Document) -> Option<u16> {
+    parse_toml_element(config_key, config_doc)
+        .ok()
+        .and_then(|address_str| address_str.to_socket_addrs().ok())
+        .and_then(|mut addr| match addr.next() {
+            Some(SocketAddr::V4(v4_addr)) => Some(v4_addr.port()),
+            Some(SocketAddr::V6(v6_addr)) => Some(v6_addr.port()),
+            _ => None,
+        })
+}
+
 #[allow(clippy::too_many_lines)]
 async fn client_connection(
     client_endpoint: Endpoint,
@@ -236,6 +264,7 @@ async fn client_connection(
     local_host_name: String,
     notify_shutdown: Arc<Notify>,
 ) -> Result<()> {
+    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc);
     'connection: loop {
         match connect(&client_endpoint, &peer_info).await {
             Ok((connection, mut send, mut recv)) => {
@@ -272,11 +301,18 @@ async fn client_connection(
 
                 // Exchange peer list/source list.
                 let (recv_peer_list, recv_source_list) =
-                    request_init_info::<(HashSet<PeerInfo>, HashSet<String>)>(
+                    request_init_info::<(HashSet<PeerInfo>, PeerSourceData)>(
                         &mut send,
                         &mut recv,
                         PeerCode::UpdatePeerList,
-                        (send_peer_list, send_source_list),
+                        (
+                            send_peer_list,
+                            PeerSourceData {
+                                ingest_sources: send_source_list,
+                                graphql_port,
+                                publish_port,
+                            },
+                        ),
                     )
                     .await?;
 
@@ -284,7 +320,6 @@ async fn client_connection(
                 update_to_new_source_list(
                     recv_source_list,
                     remote_addr.clone(),
-                    connection.remote_address().port(),
                     peer_conn_info.peer_sources.clone(),
                 )
                 .await;
@@ -335,12 +370,11 @@ async fn client_connection(
                             let peer_list = peer_conn_info.peer_list.clone();
                             let sender = peer_conn_info.peer_sender.clone();
                             let remote_addr = remote_addr.clone();
-                            let remote_port = connection.remote_address().port();
                             let peer_sources = peer_conn_info.peer_sources.clone();
                             let doc = peer_conn_info.config_doc.clone();
                             let path= peer_conn_info.config_path.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, remote_port, peer_list, peer_sources, sender, doc, path).await {
+                                if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, peer_list, peer_sources, sender, doc, path).await {
                                     error!("failed: {}", e);
                                 }
                             });
@@ -348,10 +382,14 @@ async fn client_connection(
                         () = peer_conn_info.notify_source.notified() => {
                             let source_list: HashSet<String> = peer_conn_info.ingest_sources.read().await.keys().cloned().collect();
                             for conn in (*peer_conn_info.peer_conn.write().await).values() {
-                                tokio::spawn(update_peer_info::<HashSet<String>>(
+                                tokio::spawn(update_peer_info::<PeerSourceData>(
                                     conn.clone(),
                                     PeerCode::UpdateSourceList,
-                                    source_list.clone(),
+                                    PeerSourceData {
+                                        ingest_sources: source_list.clone(),
+                                        graphql_port,
+                                        publish_port,
+                                    }
                                 ));
                             }
                         },
@@ -429,20 +467,27 @@ async fn server_connection(
         .collect();
 
     // Exchange peer list/source list.
+    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc);
     let (recv_peer_list, recv_source_list) =
-        response_init_info::<(HashSet<PeerInfo>, HashSet<String>)>(
+        response_init_info::<(HashSet<PeerInfo>, PeerSourceData)>(
             &mut send,
             &mut recv,
             PeerCode::UpdatePeerList,
-            (peer_conn_info.peer_list.read().await.clone(), source_list),
+            (
+                peer_conn_info.peer_list.read().await.clone(),
+                PeerSourceData {
+                    ingest_sources: source_list,
+                    graphql_port,
+                    publish_port,
+                },
+            ),
         )
         .await?;
 
     // Update to the list of received sources.
     update_to_new_source_list(
-        recv_source_list.clone(),
+        recv_source_list,
         remote_addr.clone(),
-        connection.remote_address().port(),
         peer_conn_info.peer_sources.clone(),
     )
     .await;
@@ -493,12 +538,11 @@ async fn server_connection(
                 let peer_list = peer_conn_info.peer_list.clone();
                 let sender = peer_conn_info.peer_sender.clone();
                 let remote_addr = remote_addr.clone();
-                let remote_port = connection.remote_address().port();
                 let peer_sources = peer_conn_info.peer_sources.clone();
                 let doc = peer_conn_info.config_doc.clone();
                 let path= peer_conn_info.config_path.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, remote_port, peer_list, peer_sources, sender, doc, path).await {
+                    if let Err(e) = handle_request(stream, peer_conn_info.local_address, remote_addr, peer_list, peer_sources, sender, doc, path).await {
                         error!("failed: {}", e);
                     }
                 });
@@ -528,7 +572,6 @@ async fn handle_request(
     (_, mut recv): (SendStream, RecvStream),
     local_addr: SocketAddr,
     remote_addr: String,
-    remote_port: u16,
     peer_list: Arc<RwLock<HashSet<PeerInfo>>>,
     peer_sources: PeerSources,
     sender: Sender<PeerInfo>,
@@ -544,10 +587,9 @@ async fn handle_request(
                 .await?;
         }
         PeerCode::UpdateSourceList => {
-            let update_source_list = bincode::deserialize::<HashSet<String>>(&msg_buf)
+            let update_source_list = bincode::deserialize::<PeerSourceData>(&msg_buf)
                 .map_err(|e| anyhow!("Failed to deserialize source list: {}", e))?;
-            update_to_new_source_list(update_source_list, remote_addr, remote_port, peer_sources)
-                .await;
+            update_to_new_source_list(update_source_list, remote_addr, peer_sources).await;
         }
     }
     Ok(())
@@ -676,15 +718,14 @@ async fn update_to_new_peer_list(
 }
 
 async fn update_to_new_source_list(
-    recv_source_list: HashSet<String>,
+    recv_source_list: PeerSourceData,
     remote_addr: String,
-    remote_port: u16,
-    peer_sources: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    peer_sources: Arc<RwLock<HashMap<String, PeerSourceData>>>,
 ) {
     peer_sources
         .write()
         .await
-        .insert(format!("{remote_addr}:{remote_port}"), recv_source_list);
+        .insert(remote_addr, recv_source_list);
 }
 
 #[cfg(test)]
@@ -876,7 +917,7 @@ mod tests {
         // run peer client
         let mut peer_client_one = TestClient::new().await;
         let (recv_peer_list, recv_source_list) =
-            request_init_info::<(HashSet<PeerInfo>, HashSet<String>)>(
+            request_init_info::<(HashSet<PeerInfo>, PeerSourceData)>(
                 &mut peer_client_one.send,
                 &mut peer_client_one.recv,
                 PeerCode::UpdatePeerList,
@@ -907,7 +948,7 @@ mod tests {
             .await
             .expect("failed to open stream");
         let (msg_type, msg_buf) = receive_peer_data(&mut recv_pub_resp).await.unwrap();
-        let update_source_list = bincode::deserialize::<HashSet<String>>(&msg_buf).unwrap();
+        let update_source_list = bincode::deserialize::<PeerSourceData>(&msg_buf).unwrap();
 
         // compare server's source list
         assert_eq!(msg_type, PeerCode::UpdateSourceList);

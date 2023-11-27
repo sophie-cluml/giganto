@@ -11,7 +11,7 @@ use crate::{server::SERVER_REBOOT_DELAY, storage::migrate_data_dir};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use giganto_client::init_tracing;
-use peer::PeerSources;
+use peer::{PeerSources, PeerSourceData};
 use quinn::Connection;
 use rocksdb::DB;
 use rustls::{Certificate, PrivateKey};
@@ -317,5 +317,5 @@ fn new_stream_direct_channels() -> StreamDirectChannels {
 }
 
 fn new_peer_sources() -> PeerSources {
-    Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()))
+    Arc::new(RwLock::new(HashMap::<String, PeerSourceData>::new()))
 }
