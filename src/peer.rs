@@ -651,7 +651,7 @@ async fn update_to_new_peer_list(
     let mut is_change = false;
     for recv_peer_info in recv_peer_list {
         // if local_address.ip() != recv_peer_info.address.ip()
-        // pita temp 마지막까지 유지...
+        // 9. pita temp 마지막까지 유지...
         if !(local_address.ip() == recv_peer_info.address.ip()
             && local_address.port() == recv_peer_info.address.port())
             && !peer_list.read().await.contains(&recv_peer_info)

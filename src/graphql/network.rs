@@ -14,7 +14,7 @@ use crate::{
 };
 use async_graphql::{
     connection::{query, Connection, Edge},
-    Context, InputObject, Object, Result, SimpleObject, Union,
+    Context, Error, InputObject, Object, Result, SimpleObject, Union,
 };
 use chrono::{DateTime as ChronoDateTime, Utc};
 use giganto_client::ingest::network::{
@@ -23,6 +23,7 @@ use giganto_client::ingest::network::{
 use graphql_client::{GraphQLQuery, Response as GraphQlResponse};
 use serde::Serialize;
 use std::{collections::BTreeSet, fmt::Debug, iter::Peekable, net::IpAddr};
+use tracing::{info, warn, error};
 
 type DateTime = ChronoDateTime<Utc>;
 
@@ -880,12 +881,22 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, ConnRawEvent>> {
+        // async_graphql::Error
+        let res: std::prelude::v1::Result<
+            &std::sync::Arc<
+                tokio::sync::RwLock<std::collections::HashMap<String, ChronoDateTime<Utc>>>,
+            >,
+            async_graphql::Error,
+        > = ctx.data::<IngestSources>();
+
         let is_current_giganto_in_charge = ctx
             .data::<IngestSources>()?
             .read()
             .await
             .iter()
             .any(|(ingest_source_name, _last_conn_time)| ingest_source_name == &filter.source);
+
+        info!("is_current_giganto_in_charge {is_current_giganto_in_charge}");
 
         if is_current_giganto_in_charge {
             let db = ctx.data::<Database>()?;
@@ -901,7 +912,7 @@ impl NetworkQuery {
             )
             .await
         } else {
-            // pita 테스트해보기 //  "node1:8443";
+            // 2. pita 테스트해보기 //  "node1:8443";
             let target_peer_address = ctx.data::<PeerSources>()?.read().await.iter().find_map(
                 |(peer_address, peer_ingest_sources)| {
                     if peer_ingest_sources.contains(&filter.source) {
@@ -952,16 +963,17 @@ impl NetworkQuery {
                                         Ok(Connection::new(false, false))
                                     }
                                 } else {
-                                    // pita todo panic은 error로 변경하기
-                                    panic!("GraphQLParseError");
+                                    Err(Error::new(
+                                        "Peer giganto's response failed to deserialize.",
+                                    ))
                                 }
                             }
                             Err(_err) => {
-                                panic!("HttpStatusNoSuccess(res.status()");
+                                Err(Error::new("Peer giganto's response status is not success."))
                             }
                         }
                     } else {
-                        panic!("GraphQLResponseError");
+                        Err(Error::new("Peer giganto did not respond"))
                     }
                 }
                 None => Ok(Connection::new(false, false)),
@@ -969,7 +981,7 @@ impl NetworkQuery {
         }
     }
 
-    // pita 다른 것들도 노가다로 적용....
+    // 2. pita 다른 것들도 노가다로 적용....
     async fn dns_raw_events<'ctx>(
         &self,
         ctx: &Context<'ctx>,
