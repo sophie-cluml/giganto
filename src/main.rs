@@ -11,7 +11,7 @@ use crate::{server::SERVER_REBOOT_DELAY, storage::migrate_data_dir};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use giganto_client::init_tracing;
-use peer::{PeerSources, PeerSourceData};
+use peer::{PeerSourceData, PeerSources};
 use quinn::Connection;
 use rocksdb::DB;
 use rustls::{Certificate, PrivateKey};
@@ -108,18 +108,9 @@ async fn main() -> Result<()> {
         return Err(anyhow!("failed to set signal handler: {}", e));
     }
 
-    let reqwest_cert_files: Vec<reqwest::Certificate> = files
-        .iter()
-        .map(|cert_data| {
-            reqwest::Certificate::from_pem(cert_data.as_slice())
-                .expect("Failed to convert certificate to reqwest::Certificate")
-        })
-        .collect();
-    let mut request_client_pool = reqwest::Client::builder().use_rustls_tls();
-    for root_cert in reqwest_cert_files {
-        request_client_pool = request_client_pool.add_root_certificate(root_cert);
-    }
-    let request_client_pool = request_client_pool
+    let request_client_pool = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .tls_sni(false)
         .build()
         .expect("Failed to build request client pool");
 

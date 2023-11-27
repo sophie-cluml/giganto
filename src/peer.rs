@@ -30,7 +30,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    select,
+    join, select,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Notify, RwLock,
@@ -45,7 +45,7 @@ const PEER_RETRY_INTERVAL: u64 = 5;
 
 pub type PeerSources = Arc<RwLock<HashMap<String, PeerSourceData>>>;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 pub struct PeerSourceData {
     pub ingest_sources: HashSet<String>,
     pub graphql_port: Option<u16>,
@@ -238,14 +238,14 @@ async fn connect(
     Ok((connection, send, recv))
 }
 
-fn get_peer_ports(config_doc: &Document) -> (Option<u16>, Option<u16>) {
-    (
-        get_port_from_config(CONFIG_PUBLISH_ADDRESS, config_doc),
+async fn get_peer_ports(config_doc: &Document) -> (Option<u16>, Option<u16>) {
+    join!(
         get_port_from_config(CONFIG_GRAPHQL_ADDRESS, config_doc),
+        get_port_from_config(CONFIG_PUBLISH_ADDRESS, config_doc)
     )
 }
 
-fn get_port_from_config(config_key: &str, config_doc: &Document) -> Option<u16> {
+async fn get_port_from_config(config_key: &str, config_doc: &Document) -> Option<u16> {
     parse_toml_element(config_key, config_doc)
         .ok()
         .and_then(|address_str| address_str.to_socket_addrs().ok())
@@ -264,7 +264,7 @@ async fn client_connection(
     local_host_name: String,
     notify_shutdown: Arc<Notify>,
 ) -> Result<()> {
-    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc);
+    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc).await;
     'connection: loop {
         match connect(&client_endpoint, &peer_info).await {
             Ok((connection, mut send, mut recv)) => {
@@ -467,7 +467,7 @@ async fn server_connection(
         .collect();
 
     // Exchange peer list/source list.
-    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc);
+    let (graphql_port, publish_port) = get_peer_ports(&peer_conn_info.config_doc).await;
     let (recv_peer_list, recv_source_list) =
         response_init_info::<(HashSet<PeerInfo>, PeerSourceData)>(
             &mut send,
@@ -550,10 +550,14 @@ async fn server_connection(
             () = peer_conn_info.notify_source.notified() => {
                 let source_list: HashSet<String> = peer_conn_info.ingest_sources.read().await.keys().cloned().collect();
                 for conn in (*peer_conn_info.peer_conn.read().await).values() {
-                    tokio::spawn(update_peer_info::<HashSet<String>>(
+                    tokio::spawn(update_peer_info::<PeerSourceData>(
                         conn.clone(),
                         PeerCode::UpdateSourceList,
-                        source_list.clone(),
+                        PeerSourceData {
+                            ingest_sources: source_list.clone(),
+                            graphql_port,
+                            publish_port
+                        }
                     ));
                 }
             },
@@ -733,7 +737,7 @@ mod tests {
     use super::Peer;
     use crate::{
         peer::{receive_peer_data, request_init_info, PeerCode, PeerInfo},
-        to_cert_chain, to_private_key,
+        to_cert_chain, to_private_key, PeerSourceData,
     };
     use chrono::Utc;
     use giganto_client::connection::client_handshake;
@@ -921,7 +925,7 @@ mod tests {
                 &mut peer_client_one.send,
                 &mut peer_client_one.recv,
                 PeerCode::UpdatePeerList,
-                (HashSet::new(), HashSet::new()),
+                (HashSet::new(), PeerSourceData::default()),
             )
             .await
             .unwrap();

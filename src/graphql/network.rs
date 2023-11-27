@@ -916,7 +916,7 @@ impl NetworkQuery {
         } else {
             let peer_graphql_endpoint = ctx.data::<PeerSources>()?.read().await.iter().find_map(
                 |(peer_address, peer_source_data)| {
-                    info!("{} {:?}", peer_address, peer_source_data.graphql_port);
+                    info!("find_out {} {:?}", peer_address, peer_source_data.graphql_port);
                     if peer_source_data.ingest_sources.contains(&filter.source)
                         && peer_source_data.graphql_port.is_some()
                     {
