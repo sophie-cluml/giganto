@@ -5,13 +5,28 @@ use super::{
 };
 use crate::{
     graphql::{
-        client::asclient::{conn_raw_events, ConnRawEvents},
+        client::asclient::{
+            conn_raw_events, dce_rpc_raw_events, dns_raw_events, ftp_raw_events, http_raw_events,
+            kerberos_raw_events, ldap_raw_events, mqtt_raw_events, nfs_raw_events, ntlm_raw_events,
+            rdp_raw_events,
+            // search_conn_raw_events, search_dce_rpc_raw_events,
+            // search_dns_raw_events, search_ftp_raw_events, search_http_raw_events,
+            // search_kerberos_raw_events, search_ldap_raw_events, search_mqtt_raw_events,
+            // search_nfs_raw_events, search_ntlm_raw_events, search_rdp_raw_events,
+            // search_smb_raw_events, search_smtp_raw_events, search_ssh_raw_events,
+            // search_tls_raw_events,
+             smb_raw_events, smtp_raw_events, ssh_raw_events, tls_raw_events,
+            ConnRawEvents, DceRpcRawEvents, DnsRawEvents, FtpRawEvents, HttpRawEvents,
+            KerberosRawEvents, LdapRawEvents, MqttRawEvents, NfsRawEvents, NtlmRawEvents,
+            RdpRawEvents, SmbRawEvents, SmtpRawEvents, SshRawEvents, TlsRawEvents,
+        },
         RawEventFilter, TimeRange,
     },
     peer::PeerSources,
     storage::{Database, FilteredIter, KeyExtractor},
     IngestSources,
 };
+
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Error, InputObject, Object, Result, SimpleObject, Union,
@@ -20,8 +35,9 @@ use chrono::{DateTime as ChronoDateTime, Utc};
 use giganto_client::ingest::network::{
     Conn, DceRpc, Dns, Ftp, Http, Kerberos, Ldap, Mqtt, Nfs, Ntlm, Rdp, Smb, Smtp, Ssh, Tls,
 };
+use giganto_proc_macro::FromGraphQlClientAutogenType;
 use graphql_client::{GraphQLQuery, Response as GraphQlResponse};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fmt::Debug, iter::Peekable, net::IpAddr};
 use tracing::{error, info, warn};
 
@@ -44,192 +60,69 @@ pub struct NetworkFilter {
     log_contents: Option<String>,
 }
 
-// macro_rules! impl_into_graphql_client_network_filter {
-//     ($client_mod:ident) => {
-//         impl Into<$client_mod::NetworkFilter> for NetworkFilter {
-//             fn into(self) -> $client_mod::NetworkFilter {
-//                 $client_mod::NetworkFilter {
-//                     time: self.time,
-//                     source: self.source,
-//                     orig_addr: self.orig_addr,
-//                     resp_addr: self.resp_addr,
-//                     orig_port: self.orig_port,
-//                     resp_port: self.resp_port,
-//                     log_level: self.log_level,
-//                     log_contents: self.log_contents,
-//                 }
-//             }
-//         }
-//     };
-// }
-// impl_into_graphql_client_network_filter!(dns_raw_events);
-// impl_into_graphql_client_network_filter!(conn_raw_events);
+macro_rules! impl_giganto_network_filter_from_graphql_autogen_network_filter {
+    ($($autogen_mod:ident),*) => {
+        $(
+            impl From<TimeRange> for $autogen_mod::TimeRange {
+                fn from(range: TimeRange) -> Self {
+                    Self {
+                        start: range.start,
+                        end: range.end,
+                    }
+                }
+            }
 
-// impl Into<conn_raw_events::TimeRange> for TimeRange {
-//     fn into(self) -> conn_raw_events::TimeRange {
-//         conn_raw_events::TimeRange {
-//             start: self.start,
-//             end: self.end,
-//         }
-//     }
-// }
-
-// impl Into<conn_raw_events::IpRange> for IpRange {
-//     fn into(self) -> conn_raw_events::IpRange {
-//         conn_raw_events::IpRange {
-//             start: self.start,
-//             end: self.end,
-//         }
-//     }
-// }
-
-// impl Into<conn_raw_events::PortRange> for PortRange {
-//     fn into(self) -> conn_raw_events::PortRange {
-//         conn_raw_events::PortRange {
-//             start: self.start.map(std::convert::Into::into),
-//             end: self.end.map(std::convert::Into::into),
-//         }
-//     }
-// }
-
-// impl Into<conn_raw_events::NetworkFilter> for NetworkFilter {
-//     fn into(self) -> conn_raw_events::NetworkFilter {
-//         conn_raw_events::NetworkFilter {
-//             time: self.time.map(std::convert::Into::into),
-//             source: self.source,
-//             orig_addr: self.orig_addr.map(std::convert::Into::into),
-//             resp_addr: self.resp_addr.map(std::convert::Into::into),
-//             orig_port: self.orig_port.map(std::convert::Into::into),
-//             resp_port: self.resp_port.map(std::convert::Into::into),
-//             log_level: self.log_level,
-//             log_contents: self.log_contents,
-//         }
-//     }
-// }
-
-// #[allow(clippy::cast_possible_truncation)]
-// impl Into<ConnRawEvent> for conn_raw_events::ConnRawEventsConnRawEventsEdgesNode {
-//     fn into(self) -> ConnRawEvent {
-//         ConnRawEvent {
-//             timestamp: self.timestamp.into(),
-//             orig_addr: self.orig_addr,
-//             orig_port: self.orig_port as _,
-//             resp_addr: self.resp_addr,
-//             resp_port: self.resp_port as _,
-//             proto: self.proto as _,
-//             duration: self.duration,
-//             service: self.service,
-//             orig_bytes: self.orig_bytes as _,
-//             resp_bytes: self.resp_bytes as _,
-//             orig_pkts: self.orig_pkts as _,
-//             resp_pkts: self.resp_pkts as _,
-//         }
-//     }
-// }
-
-impl From<TimeRange> for conn_raw_events::TimeRange {
-    fn from(range: TimeRange) -> Self {
-        conn_raw_events::TimeRange {
-            start: range.start,
-            end: range.end,
-        }
-    }
+            impl From<IpRange> for $autogen_mod::IpRange {
+                fn from(range: IpRange) -> Self {
+                    Self {
+                        start: range.start,
+                        end: range.end,
+                    }
+                }
+            }
+            impl From<PortRange> for $autogen_mod::PortRange {
+                fn from(range: PortRange) -> Self {
+                    Self {
+                        start: range.start.map(Into::into),
+                        end: range.end.map(Into::into),
+                    }
+                }
+            }
+            impl From<NetworkFilter> for $autogen_mod::NetworkFilter {
+                fn from(filter: NetworkFilter) -> Self {
+                    Self {
+                        time: filter.time.map(Into::into),
+                        source: filter.source,
+                        orig_addr: filter.orig_addr.map(Into::into),
+                        resp_addr: filter.resp_addr.map(Into::into),
+                        orig_port: filter.orig_port.map(Into::into),
+                        resp_port: filter.resp_port.map(Into::into),
+                        log_level: filter.log_level,
+                        log_contents: filter.log_contents,
+                    }
+                }
+            }
+        )*
+    };
 }
 
-impl From<IpRange> for conn_raw_events::IpRange {
-    fn from(range: IpRange) -> Self {
-        conn_raw_events::IpRange {
-            start: range.start,
-            end: range.end,
-        }
-    }
-}
-
-impl From<PortRange> for conn_raw_events::PortRange {
-    fn from(range: PortRange) -> Self {
-        conn_raw_events::PortRange {
-            start: range.start.map(Into::into),
-            end: range.end.map(Into::into),
-        }
-    }
-}
-
-impl From<NetworkFilter> for conn_raw_events::NetworkFilter {
-    fn from(filter: NetworkFilter) -> Self {
-        conn_raw_events::NetworkFilter {
-            time: filter.time.map(Into::into),
-            source: filter.source,
-            orig_addr: filter.orig_addr.map(Into::into),
-            resp_addr: filter.resp_addr.map(Into::into),
-            orig_port: filter.orig_port.map(Into::into),
-            resp_port: filter.resp_port.map(Into::into),
-            log_level: filter.log_level,
-            log_contents: filter.log_contents,
-        }
-    }
-}
-
-impl From<conn_raw_events::ConnRawEventsConnRawEventsEdgesNode> for ConnRawEvent {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn from(node: conn_raw_events::ConnRawEventsConnRawEventsEdgesNode) -> Self {
-        ConnRawEvent {
-            timestamp: node.timestamp,
-            orig_addr: node.orig_addr,
-            orig_port: node.orig_port as _,
-            resp_addr: node.resp_addr,
-            resp_port: node.resp_port as _,
-            proto: node.proto as _,
-            duration: node.duration,
-            service: node.service,
-            orig_bytes: node.orig_bytes as _,
-            resp_bytes: node.resp_bytes as _,
-            orig_pkts: node.orig_pkts as _,
-            resp_pkts: node.resp_pkts as _,
-        }
-    }
-}
-
-// impl From<TimeRange> for conn_raw_events::TimeRange {
-//     fn from(from: TimeRange) -> Self {
-//         Self {
-//             start: from.start,
-//             end: from.end,
-//         }
-//     }
-// }
-
-// impl From<IpRange> for conn_raw_events::IpRange {
-//     fn from(from: IpRange) -> Self {
-//         Self {
-//             start: from.start,
-//             end: from.end,
-//         }
-//     }
-// }
-
-// impl From<PortRange> for conn_raw_events::PortRange {
-//     fn from(from: PortRange) -> Self {
-//         Self {
-//             start: from.start.map(std::convert::From::from),
-//             end: from.end.map(std::convert::From::from),
-//         }
-//     }
-// }
-
-// impl From<NetworkFilter> for conn_raw_events::NetworkFilter {
-//     fn from(from: NetworkFilter) -> Self {
-//         Self {
-//             time: from.time.map(std::convert::From::from),
-//             source: from.source,
-//             orig_addr: from.orig_addr.map(std::convert::From::from),
-//             resp_addr: from.resp_addr.map(std::convert::From::from),
-//             orig_port: from.orig_port.map(std::convert::From::from),
-//             resp_port: from.resp_port.map(std::convert::From::from),
-//             log_level: from.log_level,
-//             log_contents: from.log_contents,
-//         }
-//     }
-// }
+impl_giganto_network_filter_from_graphql_autogen_network_filter!(
+    conn_raw_events,
+    dns_raw_events,
+    http_raw_events,
+    rdp_raw_events,
+    smtp_raw_events,
+    ntlm_raw_events,
+    kerberos_raw_events,
+    ssh_raw_events,
+    dce_rpc_raw_events,
+    ftp_raw_events,
+    mqtt_raw_events,
+    ldap_raw_events,
+    tls_raw_events,
+    nfs_raw_events,
+    smb_raw_events
+);
 
 #[derive(InputObject, Serialize)]
 pub struct SearchFilter {
@@ -332,7 +225,8 @@ impl RawEventFilter for SearchFilter {
     }
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = conn_raw_events::ConnRawEventsConnRawEventsEdgesNode)]
 struct ConnRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -349,7 +243,8 @@ struct ConnRawEvent {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = dns_raw_events::DnsRawEventsDnsRawEventsEdgesNode)]
 struct DnsRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -372,7 +267,8 @@ struct DnsRawEvent {
     ttl: Vec<i32>,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = http_raw_events::HttpRawEventsHttpRawEventsEdgesNode)]
 struct HttpRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -403,7 +299,8 @@ struct HttpRawEvent {
     resp_mime_types: Vec<String>,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = rdp_raw_events::RdpRawEventsRdpRawEventsEdgesNode)]
 struct RdpRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -415,7 +312,8 @@ struct RdpRawEvent {
     cookie: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = smtp_raw_events::SmtpRawEventsSmtpRawEventsEdgesNode)]
 struct SmtpRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -432,7 +330,8 @@ struct SmtpRawEvent {
     agent: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = ntlm_raw_events::NtlmRawEventsNtlmRawEventsEdgesNode)]
 struct NtlmRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -450,7 +349,8 @@ struct NtlmRawEvent {
     success: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = kerberos_raw_events::KerberosRawEventsKerberosRawEventsEdgesNode)]
 struct KerberosRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -459,6 +359,7 @@ struct KerberosRawEvent {
     resp_port: u16,
     proto: u8,
     last_time: i64,
+    #[autogen_]
     client_time: i64,
     server_time: i64,
     error_code: u32,
@@ -470,7 +371,8 @@ struct KerberosRawEvent {
     service_name: Vec<String>,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = ssh_raw_events::SshRawEventsSshRawEventsEdgesNode)]
 struct SshRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -493,7 +395,8 @@ struct SshRawEvent {
     host_key: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = dce_rpc_raw_events::DceRpcRawEventsDceRpcRawEventsEdgesNode)]
 struct DceRpcRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -508,7 +411,8 @@ struct DceRpcRawEvent {
     operation: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = ftp_raw_events::FtpRawEventsFtpRawEventsEdgesNode)]
 struct FtpRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -531,7 +435,8 @@ struct FtpRawEvent {
     file_id: String,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = mqtt_raw_events::MqttRawEventsMqttRawEventsEdgesNode)]
 struct MqttRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -548,7 +453,8 @@ struct MqttRawEvent {
     suback_reason: Vec<u8>,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = ldap_raw_events::LdapRawEventsLdapRawEventsEdgesNode)]
 struct LdapRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -566,7 +472,8 @@ struct LdapRawEvent {
     argument: Vec<String>,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = tls_raw_events::TlsRawEventsTlsRawEventsEdgesNode)]
 struct TlsRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -595,7 +502,8 @@ struct TlsRawEvent {
     last_alert: u8,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = smb_raw_events::SmbRawEventsSmbRawEventsEdgesNode)]
 struct SmbRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -617,7 +525,8 @@ struct SmbRawEvent {
     change_time: i64,
 }
 
-#[derive(SimpleObject, Debug)]
+#[derive(SimpleObject, Debug, FromGraphQlClientAutogenType)]
+#[autogen_type(name = nfs_raw_events::NfsRawEventsNfsRawEventsEdgesNode)]
 struct NfsRawEvent {
     timestamp: DateTime,
     orig_addr: String,
@@ -870,6 +779,84 @@ from_key_value!(
 
 from_key_value!(NfsRawEvent, Nfs, read_files, write_files);
 
+async fn is_current_giganto_in_charge<'ctx>(ctx: &Context<'ctx>, source_filter: &str) -> bool {
+    let ingest_sources = ctx.data_opt::<IngestSources>();
+    match ingest_sources {
+        Some(ingest_sources) => ingest_sources
+            .read()
+            .await
+            .iter()
+            .any(|(ingest_source_name, _last_conn_time)| ingest_source_name == source_filter),
+        None => false,
+    }
+}
+
+async fn peer_in_charge_graphql_addr<'ctx>(
+    ctx: &Context<'ctx>,
+    source_filter: &str,
+) -> Option<String> {
+    let peer_sources = ctx.data_opt::<PeerSources>();
+    match peer_sources {
+        Some(peer_sources) => {
+            peer_sources
+                .read()
+                .await
+                .iter()
+                .find_map(|(peer_address, peer_source_data)| {
+                    if peer_source_data.ingest_sources.contains(source_filter)
+                        && peer_source_data.graphql_port.is_some()
+                    {
+                        Some(format!(
+                            "{}:{}",
+                            peer_address,
+                            peer_source_data.graphql_port.unwrap()
+                        ))
+                    } else {
+                        None
+                    }
+                })
+        }
+        None => None,
+    }
+}
+
+async fn request_peer<QueryBodyType, ResponseDataType, ResultDataType, F>(
+    client: &reqwest::Client,
+    peer_graphql_addr: &str,
+    req_body: graphql_client::QueryBody<QueryBodyType>,
+    response_to_result_converter: F,
+) -> Result<ResultDataType>
+where
+    QueryBodyType: Serialize,
+    ResponseDataType: for<'a> Deserialize<'a>,
+    F: 'static + FnOnce(Option<ResponseDataType>) -> ResultDataType,
+{
+    let req = client
+        .post(format!("https://{peer_graphql_addr}/graphql"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&req_body);
+
+    if let Ok(resp) = req.send().await {
+        match resp.error_for_status() {
+            Ok(resp_ok) => {
+                if let Ok(graphql_resp) = resp_ok.json::<GraphQlResponse<ResponseDataType>>().await
+                {
+                    let mmy = graphql_resp.data;
+                    Ok(response_to_result_converter(mmy))
+                } else {
+                    Err(Error::new("Peer giganto's response failed to deserialize."))
+                }
+            }
+            Err(err) => Err(Error::new(format!(
+                "Peer giganto's response status is not success. {}",
+                err
+            ))),
+        }
+    } else {
+        Err(Error::new("Peer giganto did not respond"))
+    }
+}
+
 #[Object]
 impl NetworkQuery {
     async fn conn_raw_events<'ctx>(
@@ -881,26 +868,7 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, ConnRawEvent>> {
-        let is_current_giganto_in_charge = ctx
-            .data::<IngestSources>()?
-            .read()
-            .await
-            .iter()
-            .any(|(ingest_source_name, _last_conn_time)| ingest_source_name == &filter.source);
-
-        let iss = ctx.data::<IngestSources>()?.read().await;
-
-        let mut is_charge = false;
-        for (isn, _lct) in iss.iter() {
-            info!("iss.iter() isn : {}, filter sn: {}", isn, filter.source);
-            if isn == &filter.source {
-                is_charge = true;
-            }
-        }
-        info!("is_charge {is_charge}");
-        info!("is_current_giganto_in_charge {is_current_giganto_in_charge}");
-
-        if is_current_giganto_in_charge {
+        if is_current_giganto_in_charge(ctx, &filter.source).await {
             let db = ctx.data::<Database>()?;
             let store = db.conn_store()?;
             query(
@@ -914,85 +882,49 @@ impl NetworkQuery {
             )
             .await
         } else {
-            let peer_graphql_endpoint = ctx.data::<PeerSources>()?.read().await.iter().find_map(
-                |(peer_address, peer_source_data)| {
-                    info!("find_out {} {:?}", peer_address, peer_source_data.graphql_port);
-                    if peer_source_data.ingest_sources.contains(&filter.source)
-                        && peer_source_data.graphql_port.is_some()
-                    {
-                        Some(format!(
-                            "{}:{}",
-                            peer_address,
-                            peer_source_data.graphql_port.unwrap()
-                        ))
-                    } else {
-                        None
-                    }
-                },
-            );
+            let peer_addr = peer_in_charge_graphql_addr(ctx, &filter.source).await;
 
-            match peer_graphql_endpoint {
-                Some(peer_graphql_endpoint) => {
-                    let client = ctx.data::<reqwest::Client>()?;
-                    let request_body = ConnRawEvents::build_query(conn_raw_events::Variables {
-                        filter: filter.into(),
-                        after,
-                        before,
-                        first: first.map(std::convert::Into::into),
-                        last: last.map(std::convert::Into::into),
-                    });
+            match peer_addr {
+                Some(peer_addr) => {
+                    let client: &reqwest::Client = ctx.data::<reqwest::Client>()?;
+                    let request_body: graphql_client::QueryBody<conn_raw_events::Variables> =
+                        ConnRawEvents::build_query(conn_raw_events::Variables {
+                            filter: filter.into(),
+                            after,
+                            before,
+                            first: first.map(std::convert::Into::into),
+                            last: last.map(std::convert::Into::into),
+                        });
 
-                    info!("peer_graphql_endpoint: {peer_graphql_endpoint}");
+                    let converter = |resp_data: Option<conn_raw_events::ResponseData>| {
+                        if let Some(data) = resp_data {
+                            let page_info = data.conn_raw_events.page_info;
 
-                    let req = client
-                        .post(format!("https://{peer_graphql_endpoint}/graphql"))
-                        .header(reqwest::header::CONTENT_TYPE, "application/json")
-                        .json(&request_body);
+                            let mut connection = Connection::new(
+                                page_info.has_previous_page,
+                                page_info.has_next_page,
+                            );
 
-                    if let Ok(resp) = req.send().await {
-                        match resp.error_for_status() {
-                            Ok(resp_ok) => {
-                                if let Ok(graphql_resp) = resp_ok
-                                    .json::<GraphQlResponse<conn_raw_events::ResponseData>>()
-                                    .await
-                                {
-                                    if let Some(data) = graphql_resp.data {
-                                        let page_info = data.conn_raw_events.page_info;
+                            connection.edges = data
+                                .conn_raw_events
+                                .edges
+                                .into_iter()
+                                .map(|e| Edge::new(e.cursor, e.node.into()))
+                                .collect();
 
-                                        let mut connection = Connection::new(
-                                            page_info.has_previous_page,
-                                            page_info.has_next_page,
-                                        );
-                                        connection.edges = data
-                                            .conn_raw_events
-                                            .edges
-                                            .into_iter()
-                                            .map(|e| Edge::new(e.cursor, e.node.into()))
-                                            .collect();
-                                        Ok(connection)
-                                    } else {
-                                        Ok(Connection::new(false, false))
-                                    }
-                                } else {
-                                    Err(Error::new(
-                                        "Peer giganto's response failed to deserialize.",
-                                    ))
-                                }
-                            }
-                            Err(_err) => {
-                                Err(Error::new("Peer giganto's response status is not success."))
-                            }
+                            connection
+                        } else {
+                            Connection::new(false, false)
                         }
-                    } else {
-                        Err(Error::new("Peer giganto did not respond"))
-                    }
+                    };
+
+                    request_peer(client, peer_addr.as_str(), request_body, converter).await
                 }
                 None => Ok(Connection::new(false, false)),
             }
         }
     }
 
-    // 2. pita 다른 것들도 노가다로 적용....
     async fn dns_raw_events<'ctx>(
         &self,
         ctx: &Context<'ctx>,
@@ -1002,19 +934,62 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, DnsRawEvent>> {
-        let db = ctx.data::<Database>()?;
-        let store = db.dns_store()?;
+        if is_current_giganto_in_charge(ctx, &filter.source).await {
+            let db = ctx.data::<Database>()?;
+            let store = db.dns_store()?;
 
-        query(
-            after,
-            before,
-            first,
-            last,
-            |after, before, first, last| async move {
-                load_connection(&store, &filter, after, before, first, last)
-            },
-        )
-        .await
+            query(
+                after,
+                before,
+                first,
+                last,
+                |after, before, first, last| async move {
+                    load_connection(&store, &filter, after, before, first, last)
+                },
+            )
+            .await
+        } else {
+            let peer_addr = peer_in_charge_graphql_addr(ctx, &filter.source).await;
+
+            match peer_addr {
+                Some(peer_addr) => {
+                    let client: &reqwest::Client = ctx.data::<reqwest::Client>()?;
+                    let request_body: graphql_client::QueryBody<dns_raw_events::Variables> =
+                        DnsRawEvents::build_query(dns_raw_events::Variables {
+                            filter: filter.into(),
+                            after,
+                            before,
+                            first: first.map(std::convert::Into::into),
+                            last: last.map(std::convert::Into::into),
+                        });
+
+                    let converter = |resp_data: Option<dns_raw_events::ResponseData>| {
+                        if let Some(data) = resp_data {
+                            let page_info = data.dns_raw_events.page_info;
+
+                            let mut connection = Connection::new(
+                                page_info.has_previous_page,
+                                page_info.has_next_page,
+                            );
+
+                            connection.edges = data
+                                .dns_raw_events
+                                .edges
+                                .into_iter()
+                                .map(|e| Edge::new(e.cursor, e.node.into()))
+                                .collect();
+
+                            connection
+                        } else {
+                            Connection::new(false, false)
+                        }
+                    };
+
+                    request_peer(client, peer_addr.as_str(), request_body, converter).await
+                }
+                None => Ok(Connection::new(false, false)),
+            }
+        }
     }
 
     async fn http_raw_events<'ctx>(
