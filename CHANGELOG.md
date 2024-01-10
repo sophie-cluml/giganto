@@ -88,7 +88,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Fix `retain_periodically`
 
-## [Unreleased]
+## [0.15.4+tis.0.0.1] - 2024-01-10
 
 ### Added
 
@@ -448,7 +448,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 [0.18.0]: <https://github.com/aicers/giganto/compare/0.17.0...0.18.0>
 [0.17.0]: <https://github.com/aicers/giganto/compare/0.16.0...0.17.0>
 [0.16.0]: <https://github.com/aicers/giganto/compare/0.15.3...0.16.0>
-[Unreleased]: <https://github.com/aicers/giganto/compare/0.15.4...tis>
+[0.15.4+tis.0.0.1]: <https://github.com/aicers/giganto/compare/0.15.4...0.15.4+tis.0.0.1>
 [0.15.4]: <https://github.com/aicers/giganto/compare/0.15.3...0.15.4>
 [0.15.3]: <https://github.com/aicers/giganto/compare/0.15.2...0.15.3>
 [0.15.2]: <https://github.com/aicers/giganto/compare/0.15.1...0.15.2>
