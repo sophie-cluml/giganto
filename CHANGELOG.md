@@ -88,6 +88,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Fix `retain_periodically`
 
+## [Unreleased]
+
+### Added
+
+- Add url collector to `request_stream()`and `send_stream()` and testcode.
+
 ## [0.15.4] - 2023-11-22
 
 ### Added
@@ -442,6 +448,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 [0.18.0]: <https://github.com/aicers/giganto/compare/0.17.0...0.18.0>
 [0.17.0]: <https://github.com/aicers/giganto/compare/0.16.0...0.17.0>
 [0.16.0]: <https://github.com/aicers/giganto/compare/0.15.3...0.16.0>
+[Unreleased]: <https://github.com/aicers/giganto/compare/0.15.4...tis>
 [0.15.4]: <https://github.com/aicers/giganto/compare/0.15.3...0.15.4>
 [0.15.3]: <https://github.com/aicers/giganto/compare/0.15.2...0.15.3>
 [0.15.2]: <https://github.com/aicers/giganto/compare/0.15.1...0.15.2>
